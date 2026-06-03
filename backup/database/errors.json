@@ -1,0 +1,13 @@
+[
+  {
+    "url": "https://anitube.vip",
+    "final_url": "https://anitube.vip",
+    "title": "Attention Required! | Cloudflare",
+    "status": "blocked_or_captcha_detected",
+    "html_file": "backup/html/anitube.vip_ec21a38463.blocked.html",
+    "screenshot_file": "backup/screenshots/anitube.vip_ec21a38463.blocked.png",
+    "links_found": 0,
+    "error": "Página parece conter captcha, challenge ou bloqueio. Não foi tentado contornar.",
+    "backed_up_at": "2026-06-03T21:08:48.366690+00:00"
+  }
+]
