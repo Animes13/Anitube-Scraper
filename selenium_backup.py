@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Backup renderizado com Chromium + Selenium.
+Backup renderizado com Chromium/Chrome + Selenium.
 
 O que faz:
-- Abre URLs com Chromium.
+- Abre URLs com Chromium/Chrome.
 - Espera a página carregar.
 - Salva HTML renderizado.
 - Salva screenshot.
 - Extrai links internos do mesmo domínio.
 - Cria índice JSON.
+- Funciona melhor no GitHub Actions/Linux.
+- No Termux/Android puro, Selenium local não funciona bem sem navegador remoto.
 - Não tenta burlar captcha, fingerprint ou proteção anti-bot.
 """
 
@@ -21,7 +23,7 @@ import json
 import os
 import random
 import re
-import sys
+import shutil
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -34,7 +36,6 @@ from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 
 
 BASE_URL = "https://anitube.vip"
@@ -76,6 +77,10 @@ def same_domain(url: str, base: str = BASE_URL) -> bool:
     try:
         u = urlparse(url)
         b = urlparse(base)
+
+        if not u.netloc:
+            return False
+
         return u.netloc == b.netloc or u.netloc.endswith("." + b.netloc)
     except Exception:
         return False
@@ -84,6 +89,7 @@ def same_domain(url: str, base: str = BASE_URL) -> bool:
 def safe_filename_from_url(url: str, ext: str) -> str:
     parsed = urlparse(url)
     raw = f"{parsed.netloc}{parsed.path}"
+
     if parsed.query:
         raw += "_" + parsed.query
 
@@ -100,48 +106,137 @@ def read_seed_urls(path: Path) -> list[str]:
         return [BASE_URL]
 
     urls: list[str] = []
+
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
+
         if not line or line.startswith("#"):
             continue
+
         urls.append(normalize_url(line))
 
     return urls or [BASE_URL]
 
 
 def save_json(path: Path, data) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
-def create_driver(headless: bool = True, page_load_timeout: int = 45) -> webdriver.Chrome:
+def path_exists(path: str | None) -> bool:
+    if not path:
+        return False
+
+    return Path(path).exists()
+
+
+def find_chrome_binary() -> str | None:
+    """
+    Procura Chrome/Chromium em caminhos comuns do Linux/GitHub Actions.
+    Só retorna caminho existente.
+    """
+
+    env_binary = os.environ.get("CHROME_BINARY")
+
+    if path_exists(env_binary):
+        return env_binary
+
+    candidates = [
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chrome"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/opt/google/chrome/chrome",
+    ]
+
+    for candidate in candidates:
+        if path_exists(candidate):
+            return candidate
+
+    return None
+
+
+def find_chromedriver() -> str | None:
+    """
+    Procura ChromeDriver em caminhos comuns.
+    Só retorna caminho existente.
+    """
+
+    env_driver = os.environ.get("CHROMEDRIVER")
+
+    if path_exists(env_driver):
+        return env_driver
+
+    candidates = [
+        shutil.which("chromedriver"),
+        "/usr/bin/chromedriver",
+        "/usr/local/bin/chromedriver",
+    ]
+
+    for candidate in candidates:
+        if path_exists(candidate):
+            return candidate
+
+    return None
+
+
+def create_driver(
+    headless: bool = True,
+    page_load_timeout: int = 45,
+    remote_url: str | None = None,
+) -> webdriver.Chrome:
     options = Options()
 
     if headless:
-        # Selenium recomenda configurar headless por argumento em versões modernas.
         options.add_argument("--headless=new")
 
     options.add_argument("--window-size=1366,768")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-popup-blocking")
 
-    # Identificação clara do propósito do crawler.
-    # Não use isso para se passar por outro navegador/pessoa.
+    # Identificação clara do crawler.
     options.add_argument(
         "--user-agent=AnitubeBackupBot/1.0 "
         "(authorized backup; contact: owner@anitube.vip)"
     )
 
-    binary = os.environ.get("CHROME_BINARY")
-    if binary:
-        options.binary_location = binary
+    chrome_binary = find_chrome_binary()
 
-    chromedriver = os.environ.get("CHROMEDRIVER")
-    if chromedriver:
-        driver = webdriver.Chrome(service=Service(chromedriver), options=options)
+    if chrome_binary:
+        print(f"[CHROME] Usando navegador: {chrome_binary}")
+        options.binary_location = chrome_binary
     else:
-        # Selenium Manager pode resolver driver/browser quando disponível.
-        driver = webdriver.Chrome(options=options)
+        print("[CHROME] Nenhum Chrome/Chromium encontrado manualmente. Selenium tentará resolver.")
+
+    if remote_url:
+        print(f"[REMOTE] Usando Selenium remoto: {remote_url}")
+        driver = webdriver.Remote(
+            command_executor=remote_url,
+            options=options,
+        )
+    else:
+        chromedriver = find_chromedriver()
+
+        if chromedriver:
+            print(f"[DRIVER] Usando ChromeDriver: {chromedriver}")
+            driver = webdriver.Chrome(
+                service=Service(chromedriver),
+                options=options,
+            )
+        else:
+            print("[DRIVER] ChromeDriver não informado. Selenium Manager tentará resolver.")
+            driver = webdriver.Chrome(options=options)
 
     driver.set_page_load_timeout(page_load_timeout)
     return driver
@@ -154,7 +249,8 @@ def wait_basic_page_ready(driver: webdriver.Chrome, wait_seconds: float) -> None
     time.sleep(wait_seconds)
 
     try:
-        driver.execute_script("return document.readyState")
+        ready_state = driver.execute_script("return document.readyState")
+        print(f"[READY] document.readyState = {ready_state}")
     except Exception:
         pass
 
@@ -165,7 +261,11 @@ def extract_internal_links(html: str, current_url: str, base_url: str) -> list[s
 
     for tag in soup.find_all("a", href=True):
         href = str(tag.get("href", "")).strip()
+
         if not href:
+            continue
+
+        if href.startswith(("javascript:", "mailto:", "tel:", "#")):
             continue
 
         absolute = normalize_url(urljoin(current_url, href))
@@ -178,7 +278,7 @@ def extract_internal_links(html: str, current_url: str, base_url: str) -> list[s
 
 def looks_like_block_or_captcha(html: str, title: str | None) -> bool:
     """
-    Detecta para registrar no log.
+    Detecta bloqueio para registrar no log.
     Não tenta contornar.
     """
     text = " ".join([title or "", html[:5000]]).lower()
@@ -191,6 +291,7 @@ def looks_like_block_or_captcha(html: str, title: str | None) -> bool:
         "forbidden",
         "cloudflare",
         "challenge",
+        "attention required",
     ]
 
     return any(marker in text for marker in markers)
@@ -205,10 +306,10 @@ def backup_one_page(
 ) -> tuple[PageBackup, list[str]]:
     html_file = None
     screenshot_file = None
-    links: list[str] = []
 
     try:
         print(f"[OPEN] {url}")
+
         driver.get(url)
         wait_basic_page_ready(driver, wait_seconds)
 
@@ -217,17 +318,29 @@ def backup_one_page(
         html = driver.page_source or ""
 
         if looks_like_block_or_captcha(html, title):
+            html_name = safe_filename_from_url(final_url, "blocked.html")
+            html_path = HTML_DIR / html_name
+            html_path.write_text(html, encoding="utf-8")
+            html_file = str(html_path)
+
+            if screenshot:
+                shot_name = safe_filename_from_url(final_url, "blocked.png")
+                shot_path = SHOT_DIR / shot_name
+                driver.save_screenshot(str(shot_path))
+                screenshot_file = str(shot_path)
+
             record = PageBackup(
                 url=url,
                 final_url=final_url,
                 title=title,
                 status="blocked_or_captcha_detected",
-                html_file=None,
-                screenshot_file=None,
+                html_file=html_file,
+                screenshot_file=screenshot_file,
                 links_found=0,
                 error="Página parece conter captcha, challenge ou bloqueio. Não foi tentado contornar.",
                 backed_up_at=now_iso(),
             )
+
             return record, []
 
         html_name = safe_filename_from_url(final_url, "html")
@@ -307,12 +420,17 @@ def crawl(
     wait_seconds: float,
     headless: bool,
     screenshot: bool,
+    remote_url: str | None = None,
 ) -> None:
     queue: list[tuple[str, int]] = [(normalize_url(u), 0) for u in seed_urls]
     seen: set[str] = set()
+    queued: set[str] = {normalize_url(u) for u in seed_urls}
     results: list[PageBackup] = []
 
-    driver = create_driver(headless=headless)
+    driver = create_driver(
+        headless=headless,
+        remote_url=remote_url,
+    )
 
     try:
         while queue and len(seen) < max_pages:
@@ -341,15 +459,21 @@ def crawl(
 
             if depth < max_depth and record.status == "ok":
                 for link in links:
-                    if link not in seen:
+                    link = normalize_url(link)
+
+                    if link not in seen and link not in queued:
                         queue.append((link, depth + 1))
+                        queued.add(link)
 
             delay = random.uniform(delay_min, delay_max)
             print(f"[WAIT] {delay:.1f}s")
             time.sleep(delay)
 
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     index = {
         "site": base_url,
@@ -378,7 +502,8 @@ def crawl(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backup com Chromium + Selenium.")
+    parser = argparse.ArgumentParser(description="Backup com Chromium/Chrome + Selenium.")
+
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--urls-file", default="urls.txt")
     parser.add_argument("--max-pages", type=int, default=50)
@@ -386,8 +511,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delay-min", type=float, default=3.0)
     parser.add_argument("--delay-max", type=float, default=8.0)
     parser.add_argument("--wait", type=float, default=5.0)
+    parser.add_argument("--remote-url", default=None)
     parser.add_argument("--no-headless", action="store_true")
     parser.add_argument("--no-screenshot", action="store_true")
+
     return parser.parse_args()
 
 
@@ -410,6 +537,7 @@ def main() -> int:
         wait_seconds=args.wait,
         headless=not args.no_headless,
         screenshot=not args.no_screenshot,
+        remote_url=args.remote_url,
     )
 
     return 0

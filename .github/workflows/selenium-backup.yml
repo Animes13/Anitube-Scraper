@@ -22,21 +22,17 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Instalar Chromium e ChromeDriver
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser chromium-chromedriver || true
-          sudo apt-get install -y chromium chromium-driver || true
+      - name: Instalar Google Chrome
+        uses: browser-actions/setup-chrome@v1
 
-      - name: Mostrar versões
+      - name: Verificar Chrome
         run: |
-          python --version
+          which google-chrome || true
+          which chrome || true
           which chromium || true
-          which chromium-browser || true
-          which chromedriver || true
+          google-chrome --version || true
+          chrome --version || true
           chromium --version || true
-          chromium-browser --version || true
-          chromedriver --version || true
 
       - name: Instalar dependências Python
         run: |
@@ -44,9 +40,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Rodar backup com Selenium
-        env:
-          CHROME_BINARY: /usr/bin/chromium
-          CHROMEDRIVER: /usr/bin/chromedriver
         run: |
           python selenium_backup.py \
             --base-url "https://anitube.vip" \
