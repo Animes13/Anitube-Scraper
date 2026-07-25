@@ -1,6 +1,6 @@
 {
   "site": "https://anitube.vip",
-  "generated_at": "2026-07-24T05:39:22.318570+00:00",
+  "generated_at": "2026-07-25T05:33:27.576038+00:00",
   "max_pages": 50,
   "max_depth": 2,
   "total_processed": 1,
@@ -16,7 +16,7 @@
       "screenshot_file": "backup/screenshots/anitube.vip_ec21a38463.blocked.png",
       "links_found": 0,
       "error": "Página parece conter captcha, challenge ou bloqueio. Não foi tentado contornar.",
-      "backed_up_at": "2026-07-24T05:39:16.948380+00:00"
+      "backed_up_at": "2026-07-25T05:33:20.861561+00:00"
     }
   ]
 }
